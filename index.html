@@ -170,6 +170,20 @@
     .sent-list:not(:empty) { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
     .sent-item { font-size: 13px; color: var(--s-done); }
 
+    /* ── Коментарі задачі ───────────────────────── */
+    .sec-head { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 8px; }
+    .sec-head .sec-title { margin: 0; }
+    .cmt-refresh { border: none; background: none; color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 6px; }
+    .comments { display: flex; flex-direction: column; gap: 8px; }
+    .cmt { background: var(--card); border-radius: 12px; padding: 11px 13px; }
+    .cmt-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    .cmt-author { font-size: 13px; font-weight: 700; }
+    .cmt-date { font-size: 12px; color: var(--hint); white-space: nowrap; }
+    .cmt-text { font-size: 14px; margin: 0; word-break: break-word; }
+    .cmt-files { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+    .cmt-files a { font-size: 13px; color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cmt-hint { font-size: 13px; color: var(--hint); padding: 12px 4px; }
+
     .screen { display: none; }
     .screen.active { display: block; animation: fade .18s ease; }
     @keyframes fade { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none;} }
@@ -232,6 +246,12 @@
             </div>
             <div class="sent-list" id="sentList"></div>
           </div>
+
+          <div class="sec-head">
+            <p class="sec-title">Коментарі</p>
+            <button class="cmt-refresh" id="cmtRefresh">⟳ Оновити</button>
+          </div>
+          <div class="comments" id="cmtList"></div>
           <input type="file" id="fileInput" multiple hidden
                  accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip" />
         </div>
@@ -248,7 +268,7 @@
   /* ══════════════════════════════════════════════════════════════
      0. КОНФІГ. Заповнити базовий URL продакшн-вебхуків n8n.
      ══════════════════════════════════════════════════════════════ */
-  const API_BASE = 'https://n8n.srv1253421.hstgr.cloud/webhook';   // <-- ЗАПОВНИТИ
+  const API_BASE = 'https://n8n.srv1253421.hstgr.cloud/webhook';
 
   /* ── Telegram ─────────────────────────────────────────────────── */
   const tg = window.Telegram?.WebApp;
@@ -289,6 +309,7 @@
     return res.tasks || [];
   }
   const completeTaskApi = (taskId, done) => post('/webapp/task-complete', { taskId, done });
+  const commentsApi     = (taskId) => post('/webapp/task-comments', { taskId });
   const toggleCheckApi  = (taskId, checklistId, itemId, done) =>
         post('/webapp/checklist-toggle', { taskId, checklistId, itemId, done });
 
@@ -447,6 +468,7 @@
   function openDetail(id) {
     openTaskId = id; renderDetail();
     resetAttach();
+    loadComments();
     $('#listScreen').classList.remove('active');
     $('#detailScreen').classList.add('active');
     window.scrollTo(0, 0);
@@ -591,12 +613,50 @@
       if (!res.ok) throw new Error(res.error || 'send_failed');
       addSent(text, sentFiles); pendingFiles = []; $('#cmtText').value = ''; renderFiles();
       haptic('success'); toastOk('Додано до задачі');
+      loadComments();
     } catch (e) {
       haptic('error'); toast('Не вдалося надіслати');
     } finally {
       btn.textContent = orig; updateSendBtn();
     }
   }
+  /* ── Коментарі задачі ───────────────────────────────────────────── */
+  function fmtCmtDate(d) {
+    if (!d) return '';
+    let ms = d;
+    if (typeof d === 'string' && /^\d+$/.test(d)) ms = Number(d);
+    if (typeof ms === 'number' && ms < 1e12) ms *= 1000;   // unix seconds → ms
+    const dt = new Date(ms);
+    return isNaN(dt) ? '' : dt.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+  function renderComments(list) {
+    const box = $('#cmtList');
+    if (!list.length) { box.innerHTML = '<div class="cmt-hint">Коментарів поки немає.</div>'; return; }
+    box.innerHTML = list.map((c) => {
+      const files = (c.files || []).map((f) => f.url
+        ? `<a href="${escapeHtml(f.url)}" target="_blank" rel="noopener">📎 ${escapeHtml(f.name)}</a>`
+        : `<span>📎 ${escapeHtml(f.name)}</span>`).join('');
+      return `<div class="cmt">
+        <div class="cmt-top"><span class="cmt-author">${escapeHtml(c.author || '')}</span><span class="cmt-date">${fmtCmtDate(c.date)}</span></div>
+        ${c.text ? `<p class="cmt-text">${escapeHtml(c.text)}</p>` : ''}
+        ${files ? `<div class="cmt-files">${files}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  async function loadComments() {
+    const box = $('#cmtList');
+    if (!openTaskId || !box) return;
+    if (!inTelegram) { box.innerHTML = '<div class="cmt-hint">Коментарі доступні лише в Telegram.</div>'; return; }
+    box.innerHTML = '<div class="cmt-hint">Завантаження коментарів…</div>';
+    try {
+      const res = await commentsApi(openTaskId);
+      if (!res.ok) throw new Error(res.error || 'comments_failed');
+      renderComments(res.comments || []);
+    } catch (e) {
+      box.innerHTML = '<div class="cmt-hint">Не вдалося завантажити коментарі.</div>';
+    }
+  }
+
   function toastOk(msg) {
     const el = $('#toast'); el.textContent = msg; el.classList.add('show', 'ok');
     clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show', 'ok'), 2600);
@@ -625,6 +685,7 @@
     const row = e.target.closest('.check-item');
     if (row && !row.classList.contains('pending')) toggleCheck(row.dataset.cid, row);
   });
+  $('#cmtRefresh').addEventListener('click', loadComments);
   $('#backBtn').addEventListener('click', goBack);
   $('#actionBtn').addEventListener('click', completeTask);
   $('#retryBtn').addEventListener('click', reload);
