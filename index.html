@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Мої задачі</title>
+
+  <!-- Telegram WebApp SDK. Визначає window.Telegram.WebApp навіть у звичайному браузері (з no-op кнопками). -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    /* ─────────────────────────────────────────────
+       ТОКЕНИ. Кольори беруться з теми Telegram (--tg-theme-*),
+       а fallback-значення дають нормальний вигляд у звичайному браузері.
+       ───────────────────────────────────────────── */
+    :root {
+      --bg:        var(--tg-theme-secondary-bg-color, #eff2f6);
+      --card:      var(--tg-theme-bg-color, #ffffff);
+      --text:      var(--tg-theme-text-color, #0e1621);
+      --hint:      var(--tg-theme-hint-color, #8a97a5);
+      --accent:    var(--tg-theme-button-color, #2ea6ff);
+      --accent-tx: var(--tg-theme-button-text-color, #ffffff);
+      --sep:       color-mix(in srgb, var(--hint) 22%, transparent);
+
+      /* Семантика статусів — не залежить від теми */
+      --s-todo:  #8a97a5;
+      --s-prog:  #f5a623;
+      --s-done:  #34c759;
+
+      --radius: 16px;
+      --gap: 12px;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    /* Темний fallback для тесту в браузері поза Telegram */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:   var(--tg-theme-secondary-bg-color, #17212b);
+        --card: var(--tg-theme-bg-color, #232e3c);
+        --text: var(--tg-theme-text-color, #ffffff);
+        --hint: var(--tg-theme-hint-color, #6d7c8b);
+      }
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.4;
+      overscroll-behavior-y: none;
+    }
+
+    button { font-family: inherit; cursor: pointer; }
+
+    /* ── Каркас ─────────────────────────────────── */
+    .app { min-height: 100vh; padding-top: var(--safe-top); }
+    .screen { display: none; }
+    .screen.active { display: block; animation: fade .18s ease; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none;} }
+
+    /* ── Хедер / привітання ─────────────────────── */
+    .head {
+      display: flex; align-items: center; gap: 12px;
+      padding: 18px 16px 10px;
+    }
+    .avatar {
+      width: 44px; height: 44px; border-radius: 50%;
+      flex: 0 0 auto; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--accent); color: var(--accent-tx);
+      font-weight: 600; font-size: 18px;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .head h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.2px; }
+    .head p  { margin: 1px 0 0; font-size: 13px; color: var(--hint); }
+    .reset {
+      margin-left: auto; background: none; border: none;
+      color: var(--hint); font-size: 12px; padding: 6px;
+    }
+
+    /* ── Сегментований фільтр ───────────────────── */
+    .filters {
+      display: flex; gap: 6px;
+      margin: 4px 16px 14px;
+      background: color-mix(in srgb, var(--hint) 14%, transparent);
+      padding: 3px; border-radius: 12px;
+    }
+    .filters button {
+      flex: 1; border: none; background: none; color: var(--hint);
+      font-size: 13px; font-weight: 600; padding: 7px 4px; border-radius: 9px;
+      transition: background .15s, color .15s;
+    }
+    .filters button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+    /* ── Список плиток ──────────────────────────── */
+    .list { padding: 0 16px calc(28px + var(--safe-bottom)); display: flex; flex-direction: column; gap: var(--gap); }
+
+    .task {
+      position: relative; background: var(--card); border-radius: var(--radius);
+      padding: 14px 14px 14px 18px; overflow: hidden;
+      display: flex; gap: 12px; align-items: flex-start;
+      transition: transform .08s ease;
+    }
+    .task:active { transform: scale(.985); }
+    /* Кольорова смужка статусу зліва */
+    .task::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+      background: var(--bar, var(--s-todo));
+    }
+    .task-body { flex: 1; min-width: 0; }
+    .task-title { font-size: 16px; font-weight: 600; letter-spacing: -0.1px; margin: 0 0 3px; }
+    .task.completed .task-title { color: var(--hint); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--hint) 60%, transparent); }
+    .task-desc {
+      font-size: 13.5px; color: var(--hint); margin: 0;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .task-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .due { font-size: 12px; color: var(--hint); margin-left: auto; }
+
+    /* Пігулка статусу */
+    .pill {
+      font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+      background: color-mix(in srgb, var(--pc, var(--s-todo)) 16%, transparent);
+      color: var(--pc, var(--s-todo));
+    }
+
+    /* Кільце прогресу (сигнатурний елемент) */
+    .ring { flex: 0 0 auto; position: relative; width: 38px; height: 38px; }
+    .ring svg { transform: rotate(-90deg); display: block; }
+    .ring .track { stroke: color-mix(in srgb, var(--hint) 22%, transparent); }
+    .ring .fill  { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .4s cubic-bezier(.4,0,.2,1); }
+    .ring.done .fill { stroke: var(--s-done); }
+    .ring b {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .ring .tick { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--s-done); }
+    .ring.done b { display: none; }
+    .ring.done .tick { display: flex; }
+
+    /* ── Деталі задачі ──────────────────────────── */
+    .detail { padding: 8px 16px calc(120px + var(--safe-bottom)); }
+    .back {
+      display: none; align-items: center; gap: 4px;
+      background: none; border: none; color: var(--accent);
+      font-size: 16px; padding: 8px 0; margin: 4px 0 4px -2px;
+    }
+    body.no-tg .back { display: inline-flex; } /* показуємо лише поза Telegram */
+
+    .detail h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin: 6px 0 10px; }
+    .detail .meta { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .detail .full-desc { font-size: 15px; color: var(--text); opacity: .9; margin: 0 0 18px; }
+
+    .progress-line { margin-bottom: 20px; }
+    .progress-line .lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--hint); margin-bottom: 7px; }
+    .progress-line .lbl b { color: var(--text); font-variant-numeric: tabular-nums; }
+    .bar { height: 8px; border-radius: 20px; background: color-mix(in srgb, var(--hint) 20%, transparent); overflow: hidden; }
+    .bar i { display: block; height: 100%; border-radius: 20px; background: var(--accent); transition: width .4s cubic-bezier(.4,0,.2,1); }
+    .bar.done i { background: var(--s-done); }
+
+    .sec-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--hint); margin: 0 0 8px; }
+
+    .check {
+      background: var(--card); border-radius: 12px; overflow: hidden;
+    }
+    .check-item {
+      display: flex; align-items: center; gap: 12px; padding: 13px 14px;
+      border-bottom: 1px solid var(--sep); user-select: none;
+      transition: background .1s;
+    }
+    .check-item:last-child { border-bottom: none; }
+    .check-item:active { background: color-mix(in srgb, var(--hint) 8%, transparent); }
+    .box {
+      width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+      border: 2px solid color-mix(in srgb, var(--hint) 55%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; transition: background .15s, border-color .15s, transform .15s;
+    }
+    .check-item.on .box { background: var(--s-done); border-color: var(--s-done); transform: scale(1.05); }
+    .box svg { opacity: 0; transition: opacity .12s; }
+    .check-item.on .box svg { opacity: 1; }
+    .check-item span { font-size: 15px; transition: color .15s; }
+    .check-item.on span { color: var(--hint); text-decoration: line-through; }
+
+    /* Плаваюча кнопка дії (fallback для браузера; у Telegram працює нативний MainButton) */
+    .action-bar {
+      display: none; position: fixed; left: 0; right: 0; bottom: 0;
+      padding: 12px 16px calc(12px + var(--safe-bottom));
+      background: linear-gradient(to top, var(--bg) 60%, transparent);
+    }
+    body.no-tg .action-bar { display: block; }
+    .action-bar button {
+      width: 100%; border: none; border-radius: 12px; padding: 15px;
+      font-size: 16px; font-weight: 600; background: var(--accent); color: var(--accent-tx);
+    }
+    .action-bar button.done-state { background: var(--s-done); }
+
+    .empty { text-align: center; color: var(--hint); padding: 60px 20px; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- ЕКРАН 1: СПИСОК -->
+    <section id="listScreen" class="screen active">
+      <div class="head">
+        <div class="avatar" id="avatar"></div>
+        <div>
+          <h1 id="greeting">Привіт!</h1>
+          <p id="subgreet">Ваші задачі на сьогодні</p>
+        </div>
+        <button class="reset" id="resetBtn">Скинути демо</button>
+      </div>
+
+      <div class="filters" id="filters">
+        <button data-f="all" class="on">Всі</button>
+        <button data-f="active">Активні</button>
+        <button data-f="done">Виконані</button>
+      </div>
+
+      <div class="list" id="list"></div>
+    </section>
+
+    <!-- ЕКРАН 2: ДЕТАЛІ -->
+    <section id="detailScreen" class="screen">
+      <div class="detail">
+        <button class="back" id="backBtn">‹ Назад</button>
+        <div class="meta"><span class="pill" id="dPill"></span><span class="due" id="dDue"></span></div>
+        <h2 id="dTitle"></h2>
+        <p class="full-desc" id="dDesc"></p>
+
+        <div class="progress-line">
+          <div class="lbl"><span>Прогрес чек-листа</span><b id="dProg"></b></div>
+          <div class="bar" id="dBar"><i></i></div>
+        </div>
+
+        <p class="sec-title">Чек-лист</p>
+        <div class="check" id="dCheck"></div>
+      </div>
+
+      <div class="action-bar" id="actionBar">
+        <button id="actionBtn">Завершити задачу</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+  /* ══════════════════════════════════════════════════════════════
+     1. ІНІЦІАЛІЗАЦІЯ TELEGRAM
+     ══════════════════════════════════════════════════════════════ */
+  const tg = window.Telegram?.WebApp;
+  const user = tg?.initDataUnsafe?.user || null;   // дані користувача з Telegram
+  const inTelegram = !!user;                        // відкрито всередині Telegram?
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setBackgroundColor?.('secondary_bg_color'); } catch (e) {}
+    try { tg.setHeaderColor?.('secondary_bg_color'); } catch (e) {}
+  }
+  if (!inTelegram) document.body.classList.add('no-tg'); // увімкнути in-page кнопки
+
+  // Легка обгортка над вібро-відгуком (потрібен Telegram 6.1+)
+  function haptic(type) {
+    try {
+      const h = tg?.HapticFeedback; if (!h) return;
+      if (type === 'success') h.notificationOccurred('success');
+      else h.impactOccurred(type || 'light');
+    } catch (e) {}
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     2. ДАНІ
+     Зараз це тестові дані для макета. У бойовій версії замініть
+     loadTasks() на запит до n8n-вебхука, передавши tg.initData для
+     перевірки підпису на боці сервера — і вже сервер віддасть задачі
+     саме цього user.id. Приклад унизу файла.
+     ══════════════════════════════════════════════════════════════ */
+  const DEMO_TASKS = [
+    {
+      id: 't1',
+      title: 'Підготувати комерційну пропозицію',
+      desc: 'КП для ТОВ «Оріон» з розрахунком вартості впровадження CRM та строків.',
+      due: 'до 05.07',
+      completed: false,
+      checklist: [
+        { id: 'c1', text: 'Зібрати вимоги клієнта', done: false },
+        { id: 'c2', text: 'Підготувати кошторис', done: false },
+        { id: 'c3', text: 'Узгодити з керівником', done: false },
+        { id: 'c4', text: 'Надіслати клієнту', done: false },
+      ],
+    },
+    {
+      id: 't2',
+      title: 'Налаштувати інтеграцію з CRM',
+      desc: 'Підключити форми із сайту до воронки продажів через вебхук.',
+      due: 'до 06.07',
+      completed: false,
+      checklist: [
+        { id: 'c1', text: 'Створити вебхук у n8n', done: true },
+        { id: 'c2', text: 'Замапити поля форми', done: false },
+        { id: 'c3', text: 'Протестувати заявку', done: false },
+        { id: 'c4', text: 'Увімкнути на проді', done: false },
+      ],
+    },
+    {
+      id: 't3',
+      title: 'Провести демо для клієнта',
+      desc: 'Показати можливості Telegram WebApp на живому прикладі.',
+      due: 'сьогодні',
+      completed: true,
+      checklist: [
+        { id: 'c1', text: 'Підготувати сценарій', done: true },
+        { id: 'c2', text: 'Розгорнути демо-стенд', done: true },
+        { id: 'c3', text: 'Провести зустріч', done: true },
+      ],
+    },
+    {
+      id: 't4',
+      title: 'Опрацювати нові заявки',
+      desc: '12 заявок з реклами за вихідні — розподілити та прозвонити.',
+      due: 'до 05.07',
+      completed: false,
+      checklist: [
+        { id: 'c1', text: 'Розподілити по менеджерах', done: false },
+        { id: 'c2', text: 'Зателефонувати гарячим', done: false },
+        { id: 'c3', text: 'Оновити статуси в CRM', done: false },
+      ],
+    },
+    {
+      id: 't5',
+      title: 'Оновити базу контактів',
+      desc: 'Синхронізувати контакти з Google Sheets і прибрати дублі.',
+      due: 'до 08.07',
+      completed: false,
+      checklist: [
+        { id: 'c1', text: 'Експортувати таблицю', done: false },
+        { id: 'c2', text: 'Прибрати дублі', done: false },
+        { id: 'c3', text: 'Імпортувати в CRM', done: false },
+      ],
+    },
+  ];
+
+  // Персист стану демо в localStorage, щоб відмітки не злітали при перезавантаженні.
+  const STORE_KEY = 'tg_tasks_demo_v1';
+  function loadTasks() {
+    try {
+      const saved = localStorage.getItem(STORE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return structuredClone(DEMO_TASKS);
+  }
+  function saveTasks() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); } catch (e) {}
+  }
+
+  let tasks = loadTasks();
+  let currentFilter = 'all';
+  let openTaskId = null;
+
+  /* ══════════════════════════════════════════════════════════════
+     3. ДОПОМІЖНЕ
+     ══════════════════════════════════════════════════════════════ */
+  const $ = (s) => document.querySelector(s);
+
+  function status(t) {
+    if (t.completed) return 'done';
+    if (t.checklist.some((c) => c.done)) return 'in_progress';
+    return 'todo';
+  }
+  const STATUS_META = {
+    todo:        { label: 'Нова',      color: 'var(--s-todo)' },
+    in_progress: { label: 'В роботі',  color: 'var(--s-prog)' },
+    done:        { label: 'Виконано',  color: 'var(--s-done)' },
+  };
+  const doneCount = (t) => t.checklist.filter((c) => c.done).length;
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /* ══════════════════════════════════════════════════════════════
+     4. РЕНДЕР СПИСКУ
+     ══════════════════════════════════════════════════════════════ */
+  function renderHeader() {
+    const name = user?.first_name || 'Гість';
+    $('#greeting').textContent = `Привіт, ${name}!`;
+    const av = $('#avatar');
+    if (user?.photo_url) {
+      av.innerHTML = `<img src="${user.photo_url}" alt="">`;
+    } else {
+      av.textContent = (name[0] || 'Г').toUpperCase();
+    }
+  }
+
+  function renderList() {
+    const list = $('#list');
+    const filtered = tasks.filter((t) => {
+      if (currentFilter === 'active') return !t.completed;
+      if (currentFilter === 'done') return t.completed;
+      return true;
+    });
+
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty">Тут поки порожньо.<br>Оберіть інший фільтр 👆</div>`;
+      return;
+    }
+
+    const R = 15, C = 2 * Math.PI * R;
+    list.innerHTML = filtered.map((t) => {
+      const st = status(t);
+      const meta = STATUS_META[st];
+      const done = doneCount(t), total = t.checklist.length;
+      const frac = total ? done / total : 0;
+      const offset = C * (1 - frac);
+      const ringDone = t.completed ? 'done' : '';
+      return `
+        <div class="task ${t.completed ? 'completed' : ''}" data-id="${t.id}" style="--bar:${meta.color}">
+          <div class="task-body">
+            <p class="task-title">${escapeHtml(t.title)}</p>
+            <p class="task-desc">${escapeHtml(t.desc)}</p>
+            <div class="task-foot">
+              <span class="pill" style="--pc:${meta.color}">${meta.label}</span>
+              <span class="due">${escapeHtml(t.due || '')}</span>
+            </div>
+          </div>
+          <div class="ring ${ringDone}">
+            <svg width="38" height="38" viewBox="0 0 38 38">
+              <circle class="track" cx="19" cy="19" r="${R}" fill="none" stroke-width="3.5"/>
+              <circle class="fill"  cx="19" cy="19" r="${R}" fill="none" stroke-width="3.5"
+                stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>
+            </svg>
+            <b>${done}/${total}</b>
+            <div class="tick">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     5. РЕНДЕР ДЕТАЛЕЙ
+     ══════════════════════════════════════════════════════════════ */
+  function renderDetail() {
+    const t = tasks.find((x) => x.id === openTaskId);
+    if (!t) return;
+    const st = status(t), meta = STATUS_META[st];
+    const done = doneCount(t), total = t.checklist.length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+
+    $('#dTitle').textContent = t.title;
+    $('#dDesc').textContent = t.desc;
+    $('#dDue').textContent = t.due || '';
+    const pill = $('#dPill');
+    pill.textContent = meta.label;
+    pill.style.setProperty('--pc', meta.color);
+
+    $('#dProg').textContent = `${done} / ${total}`;
+    const bar = $('#dBar');
+    bar.classList.toggle('done', t.completed);
+    bar.querySelector('i').style.width = pct + '%';
+
+    $('#dCheck').innerHTML = t.checklist.map((c) => `
+      <div class="check-item ${c.done ? 'on' : ''}" data-cid="${c.id}">
+        <div class="box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <span>${escapeHtml(c.text)}</span>
+      </div>`).join('');
+
+    updateAction(t);
+  }
+
+  // Оновлення головної кнопки (нативної в Telegram або in-page у браузері)
+  function updateAction(t) {
+    const allDone = t.checklist.every((c) => c.done);
+    let label, isDoneState;
+    if (t.completed) { label = 'Відновити задачу'; isDoneState = false; }
+    else if (allDone) { label = 'Завершити задачу'; isDoneState = true; }
+    else { label = `Завершити задачу`; isDoneState = false; }
+
+    // in-page кнопка
+    const btn = $('#actionBtn');
+    btn.textContent = t.completed ? 'Відновити задачу' : (allDone ? '✓ Завершити задачу' : 'Завершити задачу');
+    btn.classList.toggle('done-state', allDone && !t.completed);
+
+    // нативний MainButton
+    if (inTelegram && tg?.MainButton) {
+      tg.MainButton.setText(t.completed ? 'Відновити задачу' : 'Завершити задачу');
+      try { tg.MainButton.setParams({ color: (allDone && !t.completed) ? '#34c759' : undefined }); } catch (e) {}
+      tg.MainButton.show();
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     6. НАВІГАЦІЯ
+     ══════════════════════════════════════════════════════════════ */
+  function openDetail(id) {
+    openTaskId = id;
+    renderDetail();
+    $('#listScreen').classList.remove('active');
+    $('#detailScreen').classList.add('active');
+    window.scrollTo(0, 0);
+    if (inTelegram && tg?.BackButton) tg.BackButton.show();
+    haptic('light');
+  }
+
+  function goBack() {
+    openTaskId = null;
+    $('#detailScreen').classList.remove('active');
+    $('#listScreen').classList.add('active');
+    renderList();
+    if (inTelegram) { tg?.BackButton?.hide(); tg?.MainButton?.hide(); }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     7. ДІЇ
+     ══════════════════════════════════════════════════════════════ */
+  function toggleCheck(cid) {
+    const t = tasks.find((x) => x.id === openTaskId);
+    const item = t.checklist.find((c) => c.id === cid);
+    if (!item) return;
+    item.done = !item.done;
+    if (item.done && t.completed) t.completed = false; // знято завершення, якщо редагуємо
+    saveTasks();
+    renderDetail();
+    haptic(item.done ? 'medium' : 'light');
+  }
+
+  function completeTask() {
+    const t = tasks.find((x) => x.id === openTaskId);
+    if (!t) return;
+    if (t.completed) {
+      // Відновлення
+      t.completed = false;
+      saveTasks();
+      renderDetail();
+      haptic('light');
+      return;
+    }
+    // Завершення: докрутити всі пункти й позначити задачу
+    t.checklist.forEach((c) => (c.done = true));
+    t.completed = true;
+    saveTasks();
+    haptic('success');
+    goBack();
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     8. СЛУХАЧІ ПОДІЙ
+     ══════════════════════════════════════════════════════════════ */
+  // Тап по плитці
+  $('#list').addEventListener('click', (e) => {
+    const card = e.target.closest('.task');
+    if (card) openDetail(card.dataset.id);
+  });
+
+  // Фільтри
+  $('#filters').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    currentFilter = b.dataset.f;
+    [...$('#filters').children].forEach((x) => x.classList.toggle('on', x === b));
+    renderList();
+    haptic('light');
+  });
+
+  // Тап по пункту чек-листа
+  $('#dCheck').addEventListener('click', (e) => {
+    const row = e.target.closest('.check-item');
+    if (row) toggleCheck(row.dataset.cid);
+  });
+
+  // Кнопки
+  $('#backBtn').addEventListener('click', goBack);
+  $('#actionBtn').addEventListener('click', completeTask);
+  $('#resetBtn').addEventListener('click', () => {
+    tasks = structuredClone(DEMO_TASKS);
+    saveTasks();
+    renderList();
+    haptic('medium');
+  });
+
+  // Нативні кнопки Telegram
+  if (inTelegram) {
+    tg.BackButton?.onClick(goBack);
+    tg.MainButton?.onClick(completeTask);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     9. СТАРТ
+     ══════════════════════════════════════════════════════════════ */
+  renderHeader();
+  renderList();
+
+  /* ──────────────────────────────────────────────────────────────
+     ПРИКЛАД бойового loadTasks() через n8n (для майбутнього):
+
+     async function loadTasks() {
+       const res = await fetch('https://<ваш-n8n>/webhook/tasks', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         // initData — рядок з підписом; перевіряйте його в n8n за bot token
+         body: JSON.stringify({ initData: tg.initData })
+       });
+       return await res.json();
+     }
+     Тоді старт зробіть асинхронним: tasks = await loadTasks(); renderList();
+     ────────────────────────────────────────────────────────────── */
+  </script>
+</body>
+</html>
