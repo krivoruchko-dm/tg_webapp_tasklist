@@ -90,11 +90,12 @@
     .task-desc { font-size: 13.5px; color: var(--hint); margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .task-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
     .due { font-size: 12px; color: var(--hint); margin-left: auto; }
+    .due.overdue { color: var(--s-err); font-weight: 700; }
     .pill { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
       background: color-mix(in srgb, var(--pc, var(--s-todo)) 16%, transparent); color: var(--pc, var(--s-todo)); }
 
     .ring { flex: 0 0 auto; position: relative; width: 38px; height: 38px; }
-    .ring svg {  display: block; }
+    .ring > svg { transform: rotate(-90deg); display: block; } /* лише кільце прогресу, не галочка */
     .ring .track { stroke: color-mix(in srgb, var(--hint) 22%, transparent); }
     .ring .fill  { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .4s cubic-bezier(.4,0,.2,1); }
     .ring.done .fill { stroke: var(--s-done); }
@@ -216,9 +217,9 @@
           <button class="reset" id="resetBtn">Скинути демо</button>
         </div>
         <div class="filters" id="filters">
-          <button data-f="all" class="on">Всі</button>
-          <button data-f="active">Активні</button>
+          <button data-f="active" class="on">Активні</button>
           <button data-f="done">Виконані</button>
+          <button data-f="all">Всі</button>
         </div>
         <div class="list" id="list"></div>
       </section>
@@ -349,7 +350,7 @@
      3. СТАН
      ══════════════════════════════════════════════════════════════ */
   let tasks = [];
-  let currentFilter = 'all';
+  let currentFilter = 'active';
   let openTaskId = null;
 
   const $ = (s) => document.querySelector(s);
@@ -365,6 +366,20 @@
     done:        { label: 'Виконано', color: 'var(--s-done)' },
   };
   const doneCount = (t) => t.checklist.filter((c) => c.done).length;
+
+  /* Дедлайн: unix-секунди з Uspacy → "до 03.07.2026" + ознака простроченості */
+  function dueInfo(t) {
+    if (!t.due) return { text: '', overdue: false };
+    let ms = t.due;
+    if (typeof ms === 'string' && /^\d+$/.test(ms.trim())) ms = Number(ms.trim());
+    if (typeof ms !== 'number') return { text: String(t.due), overdue: false }; // демо-рядки типу "до 05.07"
+    if (ms < 1e12) ms *= 1000; // секунди → мілісекунди
+    const dt = new Date(ms);
+    if (isNaN(dt)) return { text: String(t.due), overdue: false };
+    const text = 'до ' + dt.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const overdue = !t.completed && ms < Date.now();
+    return { text, overdue };
+  }
   const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let toastT;
@@ -406,6 +421,7 @@
       const meta = STATUS_META[status(t)];
       const done = doneCount(t), total = t.checklist.length;
       const offset = C * (1 - (total ? done / total : 0));
+      const due = dueInfo(t);
       return `
         <div class="task ${t.completed ? 'completed' : ''}" data-id="${t.id}" style="--bar:${meta.color}">
           <div class="task-body">
@@ -413,7 +429,7 @@
             <p class="task-desc">${escapeHtml(t.desc)}</p>
             <div class="task-foot">
               <span class="pill" style="--pc:${meta.color}">${meta.label}</span>
-              <span class="due">${escapeHtml(t.due || '')}</span>
+              <span class="due ${due.overdue ? 'overdue' : ''}">${due.overdue ? '⚠ ' : ''}${escapeHtml(due.text)}</span>
             </div>
           </div>
           <div class="ring ${t.completed ? 'done' : ''}">
@@ -438,7 +454,10 @@
 
     $('#dTitle').textContent = t.title;
     $('#dDesc').textContent = t.desc;
-    $('#dDue').textContent = t.due || '';
+    const due = dueInfo(t);
+    const dDue = $('#dDue');
+    dDue.textContent = (due.overdue ? '⚠ ' : '') + due.text;
+    dDue.classList.toggle('overdue', due.overdue);
     const pill = $('#dPill'); pill.textContent = meta.label; pill.style.setProperty('--pc', meta.color);
     $('#dProg').textContent = `${done} / ${total}`;
     const bar = $('#dBar'); bar.classList.toggle('done', t.completed); bar.querySelector('i').style.width = pct + '%';
